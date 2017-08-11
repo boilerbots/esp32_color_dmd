@@ -2,12 +2,16 @@
 #include "esp_wifi.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
+#include "esp_attr.h"
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "string.h"
-#include "driver/rtc_io.h"
+
+//extern volatile int port_xSchedulerRunning[2];
+void scan(void *args) IRAM_ATTR __attribute__((noreturn));
+
 
 esp_err_t event_handler(void *ctx, system_event_t *event)
 {
@@ -16,8 +20,7 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
 
 static const uint32_t columns = 64;
 static const uint32_t rows = 16;
-uint8_t data[16][64];
-volatile uint32_t select;  //ABCD
+volatile uint8_t data[16][64];
 
 void clock_test()
 {
@@ -46,7 +49,7 @@ void row_test()
 {
   while(1)
   {
-    uint32_t row;
+    //uint32_t row;
     //for (row = 0; row < rows; ++row)
     {
       //GPIO.out = (row << 12);
@@ -58,30 +61,26 @@ void row_test()
   }
 }
 
-void scan()
+void scan(void *args)
 {
   GPIO.out1_w1tc.data = (1 << 0);  //OE active low
 
   // Output the data, bit 7 is CLK
   uint32_t row, col;
-  for (row = 0; row < rows; ++row)
+  volatile uint32_t select;  //ABCD
+  while(1)
   {
-    select = (row << 12);
-    //select = 0;
-    for (col = 0; col < columns; ++col)
+    for (row = 0; row < rows; ++row)
     {
-      //GPIO.out = select | 0x9;
-      GPIO.out = select | data[row][col];  // 
-      //vTaskDelay(5 / portTICK_PERIOD_MS);
-      GPIO.out_w1ts = (1 << 16);  // CLK high
-      //vTaskDelay(5 / portTICK_PERIOD_MS);
-      //GPIO.out_w1tc = 0x10001;
-      //vTaskDelay(50 / portTICK_PERIOD_MS);
+      select = (row << 12);
+      for (col = 0; col < columns; ++col)
+      {
+        GPIO.out = select | data[row][col];  // 
+        //GPIO.out = select | 0x3F;  // 
+        GPIO.out_w1ts = (1 << 16);  // CLK high
+      }
+      GPIO.out_w1ts = (1 << 17);  // LATCH active high
     }
-    //GPIO.out1_w1ts.data = (1 << 0);  //OE high
-    GPIO.out_w1ts = (1 << 17);  // LATCH active low
-    //GPIO.out1_w1tc.data = (1 << 0);  //OE active low
-    //vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -96,6 +95,33 @@ void fill_rainbow()
       //data[row][col] = 0x3F;
       data[row][col] = color = (color + 0x81) & 0x3F;
     }
+  }
+}
+
+void fill_solid(uint32_t color)
+{
+  uint32_t row, col;
+  for (row = 0; row < rows; ++row)
+  {
+    for (col = 0; col < columns; ++col)
+    {
+      data[row][col] = color;
+    }
+  }
+}
+
+void video_pattern()
+{
+  while(1)
+  {
+    fill_rainbow(0);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    fill_solid(0x09); //RED
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    fill_solid(0x12); //BLUE
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    fill_solid(0x24); //GREEN
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -128,19 +154,19 @@ void app_main(void)
     ESP_ERROR_CHECK( esp_wifi_connect() );
 #endif
 
-// 0  R0
-// 1  G0
-// 2  B0
-// 3  R1
-// 4  G2
-// 5  B3
-// 12 A
-// 13 B
-// 14 C
-// 15 D
-// 16 CLK
-// 17 Latch
-// 32 OE
+  // 0  R0
+  // 1  G0
+  // 2  B0
+  // 3  R1
+  // 4  G2
+  // 5  B3
+  // 12 A
+  // 13 B
+  // 14 C
+  // 15 D
+  // 16 CLK
+  // 17 Latch
+  // 32 OE
 
   gpio_config_t ioConfig;
   ioConfig.pin_bit_mask = 0x10003F03F;
@@ -155,13 +181,12 @@ void app_main(void)
   //latch_test();
   //row_test();
 
-  memset(data, 0, columns * rows);
-  select = (1 << 17); // set Latch high
+  //memset(data, 0, columns * rows);
 
-  fill_rainbow();
+  xTaskCreatePinnedToCore(&scan, "scan", configMINIMAL_STACK_SIZE, NULL, (2 | portPRIVILEGE_BIT), NULL, 1);
 
   while (true) {
-    scan();
+    video_pattern();
   }
 }
 
