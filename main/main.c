@@ -8,6 +8,7 @@
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "string.h"
+#include <stdlib.h>
 
 //extern volatile int port_xSchedulerRunning[2];
 void scan(void *args) IRAM_ATTR __attribute__((noreturn));
@@ -17,10 +18,16 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
 {
     return ESP_OK;
 }
+#define VERTICAL 32
+#define HORIZONTAL 128
+#define ROWS 16
+#define COLUMNS 128
+static const uint8_t columns = COLUMNS;
+static const uint8_t rows = ROWS;
+volatile uint8_t data[ROWS][COLUMNS];
 
-static const uint32_t columns = 64;
-static const uint32_t rows = 16;
-volatile uint8_t data[16][64];
+#define WHITE 0x07
+#define BLACK 0x00
 
 void clock_test()
 {
@@ -72,14 +79,15 @@ void scan(void *args)
   {
     for (row = 0; row < rows; ++row)
     {
-      select = (row << 12);
+      select = (row << 12) | (1 << 17);
       for (col = 0; col < columns; ++col)
       {
         GPIO.out = select | data[row][col];  // 
         //GPIO.out = select | 0x3F;  // 
+        //GPIO.out = select;
         GPIO.out_w1ts = (1 << 16);  // CLK high
       }
-      GPIO.out_w1ts = (1 << 17);  // LATCH active high
+      GPIO.out_w1tc = (1 << 17);  // LATCH active high
     }
   }
 }
@@ -110,9 +118,77 @@ void fill_solid(uint32_t color)
   }
 }
 
+void dot(uint8_t row, uint8_t col, uint8_t color)
+{
+  uint8_t y;
+  for (y = row; (y <= (row + 1)) && (y < VERTICAL); y++)
+  {
+    if(y >= ROWS)
+    {
+      data[y & 0xF][col] = color << 3;
+      data[y & 0xF][col+1] = color << 3;
+    }
+    else
+    {
+      data[y][col] = color;
+      data[y][col+1] = color;
+    }
+
+  }
+}
+
+void get_goal(uint8_t *row, uint8_t *col)
+{
+  *row = rand() % VERTICAL;
+  *col = rand() % HORIZONTAL;
+}
+
+void moving_dot()
+{
+  uint8_t row, col;
+  row = 0;
+  col = 0;
+
+  uint8_t goal_x, goal_y;
+  uint8_t new_goal = true;
+  uint8_t inc_x, inc_y;
+  
+  while(1)
+  {
+    if (new_goal)
+    {
+      get_goal(&goal_y, &goal_x);
+      new_goal = false;
+
+      if (goal_x > col)
+        inc_x = 1;
+      else
+        inc_x = -1;
+
+      if (goal_y > row)
+        inc_y = 1;
+      else
+        inc_y = -1;
+    }
+
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    dot(row, col, BLACK); //Erase
+
+    if (row != goal_y)
+      row = (row + inc_y);
+    if (col != goal_x)
+      col = (col + inc_x);
+
+    if ((row == goal_y) && (col == goal_x))
+      new_goal = true;
+
+    dot(row, col, WHITE); //paint 
+  }
+}
+
 void video_pattern()
 {
-  while(1)
+  //while(1)
   {
     fill_rainbow(0);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -181,12 +257,13 @@ void app_main(void)
   //latch_test();
   //row_test();
 
-  //memset(data, 0, columns * rows);
+  memset((void *)data, 0, columns * rows);
 
   xTaskCreatePinnedToCore(&scan, "scan", configMINIMAL_STACK_SIZE, NULL, (2 | portPRIVILEGE_BIT), NULL, 1);
 
   while (true) {
     video_pattern();
+    moving_dot();
   }
 }
 
