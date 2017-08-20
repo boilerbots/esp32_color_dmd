@@ -24,7 +24,7 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
 #define COLUMNS 128
 static const uint8_t columns = COLUMNS;
 static const uint8_t rows = ROWS;
-volatile uint8_t data[ROWS][COLUMNS];
+volatile uint32_t data[ROWS][COLUMNS];
 
 #define WHITE 0x07
 #define BLACK 0x00
@@ -74,17 +74,16 @@ void scan(void *args)
 
   // Output the data, bit 7 is CLK
   uint32_t row, col;
-  volatile uint32_t select;  //ABCD
+  //volatile uint32_t select;  //ABCD
   while(1)
   {
     for (row = 0; row < rows; ++row)
     {
-      select = (row << 12) | (1 << 17);
+      //select = (row << 12) | (1 << 17);
       for (col = 0; col < columns; ++col)
       {
-        GPIO.out = select | data[row][col];  // 
-        //GPIO.out = select | 0x3F;  // 
-        //GPIO.out = select;
+        //GPIO.out = select | data[row][col];  // OR row and latch
+        GPIO.out = data[row][col];  // row and latch added to data already
         GPIO.out_w1ts = (1 << 16);  // CLK high
       }
       GPIO.out_w1tc = (1 << 17);  // LATCH active high
@@ -101,7 +100,7 @@ void fill_rainbow()
     for (col = 0; col < columns; ++col)
     {
       //data[row][col] = 0x3F;
-      data[row][col] = color = (color + 0x81) & 0x3F;
+      data[row][col] = color = ((color + 0x81) & 0x3F) | (row << 12) | (1 << 17);
     }
   }
 }
@@ -113,7 +112,7 @@ void fill_solid(uint32_t color)
   {
     for (col = 0; col < columns; ++col)
     {
-      data[row][col] = color;
+      data[row][col] = color | (row << 12) | (1 << 17);
     }
   }
 }
@@ -125,13 +124,13 @@ void dot(uint8_t row, uint8_t col, uint8_t color)
   {
     if(y >= ROWS)
     {
-      data[y & 0xF][col] = color << 3;
-      data[y & 0xF][col+1] = color << 3;
+      data[y & 0xF][col] = (color << 3) | ((y & 0xF) << 12) | (1 << 17);
+      data[y & 0xF][col+1] = (color << 3) | ((y & 0xF) << 12) | (1 << 17);
     }
     else
     {
-      data[y][col] = color;
-      data[y][col+1] = color;
+      data[y][col] = color | (y << 12) | (1 << 17);
+      data[y][col+1] = color | (y << 12) | (1 << 17);
     }
 
   }
@@ -153,6 +152,8 @@ void moving_dot()
   uint8_t new_goal = true;
   uint8_t inc_x, inc_y;
   
+  fill_solid(BLACK); //BLACK
+
   while(1)
   {
     if (new_goal)
@@ -257,7 +258,7 @@ void app_main(void)
   //latch_test();
   //row_test();
 
-  memset((void *)data, 0, columns * rows);
+  memset((void *)data, 0, sizeof(data));
 
   xTaskCreatePinnedToCore(&scan, "scan", configMINIMAL_STACK_SIZE, NULL, (2 | portPRIVILEGE_BIT), NULL, 1);
 
